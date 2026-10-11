@@ -1,0 +1,124 @@
+service: a-team-orbit
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  stage: ${opt:stage, 'prod'}
+  memorySize: 256
+  timeout: 10
+  environment:
+    TABLE: !Ref TeamTable
+  httpApi:
+    cors: true
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:Scan
+            - dynamodb:Query
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:DeleteItem
+            - dynamodb:BatchWriteItem
+          Resource: !GetAtt TeamTable.Arn
+
+functions:
+  api:
+    handler: handler.main
+    events:
+      - httpApi: 'GET /data'
+      - httpApi: 'PUT /{collection}/{id}'
+      - httpApi: 'DELETE /{collection}/{id}'
+
+resources:
+  Conditions:
+    # S3 + CloudFront hosting is on only with: serverless deploy --param="withSite=true"
+    WithSite: !Equals ['${param:withSite, "false"}', 'true']
+  Resources:
+    # One table for everything: pk = collection (members, tasks, ...), sk = item id
+    TeamTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: pk, AttributeType: S }
+          - { AttributeName: sk, AttributeType: S }
+        KeySchema:
+          - { AttributeName: pk, KeyType: HASH }
+          - { AttributeName: sk, KeyType: RANGE }
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+    # Private bucket for the React build, served only through CloudFront
+    SiteBucket:
+      Condition: WithSite
+      Type: AWS::S3::Bucket
+      Properties:
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+
+    SiteOAC:
+      Condition: WithSite
+      Type: AWS::CloudFront::OriginAccessControl
+      Properties:
+        OriginAccessControlConfig:
+          Name: ${self:service}-${sls:stage}-oac
+          OriginAccessControlOriginType: s3
+          SigningBehavior: always
+          SigningProtocol: sigv4
+
+    SiteDistribution:
+      Condition: WithSite
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Comment: A Team Orbit
+          DefaultRootObject: index.html
+          HttpVersion: http2
+          PriceClass: PriceClass_100
+          Origins:
+            - Id: site
+              DomainName: !GetAtt SiteBucket.RegionalDomainName
+              OriginAccessControlId: !GetAtt SiteOAC.Id
+              S3OriginConfig:
+                OriginAccessIdentity: ''
+          DefaultCacheBehavior:
+            TargetOriginId: site
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          CustomErrorResponses:
+            - { ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html }
+
+    SiteBucketPolicy:
+      Condition: WithSite
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref SiteBucket
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: { Service: cloudfront.amazonaws.com }
+              Action: s3:GetObject
+              Resource: !Sub '${SiteBucket.Arn}/*'
+              Condition:
+                StringEquals:
+                  AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}'
+
+  Outputs:
+    SiteBucketName:
+      Condition: WithSite
+      Value: !Ref SiteBucket
+    DistributionId:
+      Condition: WithSite
+      Value: !Ref SiteDistribution
+    SiteUrl:
+      Condition: WithSite
+      Value: !Sub 'https://${SiteDistribution.DomainName}'
