@@ -7,6 +7,15 @@ A tracker for a supervisor and up to five direct reports.
 - Weekly 30-minute 1:1 schedule, meeting logs and supervisor notes
 - Annual review form with 1–5 ratings, goals and comments
 
+## Links
+
+| What | URL |
+|------|-----|
+| Live demo (classic single-file version, saves in your browser) | https://gluay88.github.io/a-team-orbit/ |
+| React app, local development | http://localhost:5173 (see [Run locally](#run-locally)) |
+| React app, production | Coming soon on CloudFront, after AWS account verification |
+| Source code | https://github.com/Gluay88/a-team-orbit |
+
 ## Tech stack
 
 | Layer    | Tech |
